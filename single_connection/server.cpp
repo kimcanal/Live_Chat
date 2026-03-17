@@ -3,7 +3,7 @@
 int main()
 {
     signal(SIGINT, sigint_handler);
-    // 1. 서버 소켓 생성
+
     int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0)
     {
@@ -11,7 +11,6 @@ int main()
         return 1;
     }
 
-    // 2. 포트 재사용 옵션
     int opt = 1;
     if (::setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
     {
@@ -20,13 +19,11 @@ int main()
         return 1;
     }
 
-    // 3. 주소 구조체 설정
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(PORT);
     addr.sin_addr.s_addr = INADDR_ANY;
 
-    // 4. bind
     if (::bind(server_fd, (sockaddr *)&addr, sizeof(addr)) < 0)
     {
         perror("bind");
@@ -34,7 +31,6 @@ int main()
         return 1;
     }
 
-    // 5. listen
     if (::listen(server_fd, BACKLOG) < 0)
     {
         perror("listen");
@@ -43,12 +39,10 @@ int main()
     }
 
     std::cout << "Server started on port " << PORT << '\n';
-    std::cout << "You may enter CTRL+C to stop the server\n";
-    std ::cout << "Waiting for clients...\n";
+    std::cout << "Waiting for clients...\n";
 
     while (true)
     {
-        // 6. 클라이언트 접속 대기
         int client_fd = ::accept(server_fd, nullptr, nullptr);
         if (client_fd < 0)
         {
@@ -56,68 +50,99 @@ int main()
             continue;
         }
 
-        std::cout << "Client " << client_fd << " connected\n";
+        std::cout << "Client connected (fd=" << client_fd << ")\n";
 
-        // 7. 환영 메시지 전송
-        const char *msg1 = "You are connected to the server\n";
-        const char *msg2 = "Enter text (q to quit):\n";
+        char buffer[BUFFER_SIZE + 1];
 
-        if (::write(client_fd, msg1, std::strlen(msg1)) < 0)
+        // 1. 닉네임 요청
+        const char *ask_msg = "Please enter your nickname:\n";
+        if (::write(client_fd, ask_msg, std::strlen(ask_msg)) < 0)
         {
-            perror("write msg1");
+            perror("write ask_msg");
             ::close(client_fd);
             continue;
         }
 
-        if (::write(client_fd, msg2, std::strlen(msg2)) < 0)
+        // 2. 닉네임 수신
+        int n = ::read(client_fd, buffer, BUFFER_SIZE);
+        if (n < 0)
         {
-            perror("write msg2");
+            perror("read nickname");
+            ::close(client_fd);
+            continue;
+        }
+        if (n == 0)
+        {
+            std::cout << "Client disconnected before sending nickname\n";
             ::close(client_fd);
             continue;
         }
 
-        // 8. 입력 받기
+        buffer[n] = '\0';
+        std::string nickname(buffer);
+
+        while (!nickname.empty() &&
+               (nickname.back() == '\n' || nickname.back() == '\r'))
+        {
+            nickname.pop_back();
+        }
+
+        if (nickname.empty())
+            nickname = "anonymous";
+
+        std::cout << "Client fd=" << client_fd
+                  << " identified as [" << nickname << "]\n";
+
+        // 3. 환영 메시지
+        std::string welcome =
+            "Welcome, " + nickname + "\n"
+                                     "Enter text (q to quit):\n";
+
+        if (::write(client_fd, welcome.c_str(), welcome.length()) < 0)
+        {
+            perror("write welcome");
+            ::close(client_fd);
+            continue;
+        }
+
+        // 4. 일반 메시지 처리
         while (true)
         {
-            char buffer[BUFFER_SIZE + 1];
-            int n = ::read(client_fd, buffer, BUFFER_SIZE);
+            int bytes = ::read(client_fd, buffer, BUFFER_SIZE);
 
-            if (n < 0)
+            if (bytes < 0)
             {
                 perror("read");
                 break;
             }
 
-            if (n == 0)
+            if (bytes == 0)
             {
-                std::cout << "Client disconnected without sending data\n";
+                std::cout << "[" << nickname << "] disconnected\n";
                 break;
             }
 
-            // 9. 문자열 종료 처리
-            buffer[n] = '\0';
+            buffer[bytes] = '\0';
+            std::cout << "[" << nickname << "] says: " << buffer;
 
-            std::cout << "Received: " << buffer;
-
-            // 10. q 입력이면 종료
             if (std::tolower((unsigned char)buffer[0]) == 'q' &&
                 (buffer[1] == '\n' || buffer[1] == '\0'))
             {
-                std::cout << "Client " << client_fd << " requested quit\n";
-                std::string goodbye_msg = "Goodbye, Client " + std::to_string(client_fd) + "\n";
-                write(client_fd, goodbye_msg.c_str(), goodbye_msg.length());
+                std::cout << "[" << nickname << "] requested quit\n";
+                std::string goodbye = "Goodbye, " + nickname + "\n";
+                ::write(client_fd, goodbye.c_str(), goodbye.length());
                 break;
             }
 
-            // 11. echo
-            if (::write(client_fd, "You said: ", strlen("You said: ")) < 0 || ::write(client_fd, buffer, n) < 0)
+            std::string reply = "You said: ";
+            if (::write(client_fd, reply.c_str(), reply.length()) < 0 ||
+                ::write(client_fd, buffer, bytes) < 0)
             {
                 perror("write echo");
                 break;
             }
         }
 
-        // 12. 클라이언트 소켓 닫기
         ::close(client_fd);
     }
 
