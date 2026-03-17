@@ -1,0 +1,7 @@
+.vscode/
+
+# Build artifacts
+*.o
+server
+client
+main
